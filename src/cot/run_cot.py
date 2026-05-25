@@ -1,23 +1,30 @@
-"""Few-shot CoT inference + Kimi judging for Qwen2.5-0.5B-Instruct.
+"""Few-shot CoT inference + GLM judging on the raw training set.
+
+We run Qwen2.5-0.5B over `datasets/raw_train/train.json` (which has gold
+answers) so the judge model can flag Qwen failures; those become the
+rejected ("bad") side of future DPO training.
 
 Per-item flow:
-  1. Render cot.yml with the test question and chat-template it for Qwen.
-  2. Generate Qwen's raw response and parse out its final answer.
-  3. Render cot_judge.yml with (question, qwen_answer) and call Kimi-K2.6.
-  4. Append one JSON line per item to the current rotating batch log under
+  1. Render cot.yml with the question and chat-template it for Qwen.
+  2. Generate Qwen's raw CoT and parse out its final answer.
+  3. Render cot_judge.yml with (question, gold_answer, qwen_answer) and
+     call the judge model (glm-5.1-w4a8 by default).
+  4. Append one JSON line per item to a rotating batch log under
      outputs/logs/cot/run_<timestamp>/batch_<N>.log (100 entries per file).
-  5. If Kimi says correct=0 (and the judge JSON parsed cleanly), append
-     {id, question, qwen_answer} to datasets/dpo_train/bad_out.jsonl.
+  5. If judge says correct=0 (and JSON parsed cleanly), append a record
+     {id, question, gold_answer, qwen_answer, qwen_raw} to
+     datasets/dpo_train/bad_out.jsonl.
 
 Usage:
     python -m src.cot.run_cot \
         --max-items 200 \
-        --batch-size 100
+        --batch-size 100 \
+        --device cpu --dtype fp32
 
 Flags:
-    --max-items N    cap test items processed (-1 = all)
-    --no-judge       skip Kimi judging (no bad_out append)
-    --dry-run        render prompts and exit; do not load Qwen or call Kimi.
+    --max-items N    cap items processed (-1 = all)
+    --no-judge       skip the judge call (no bad_out append)
+    --dry-run        render prompts and exit; do not load Qwen or call the judge.
 """
 from __future__ import annotations
 
@@ -120,17 +127,22 @@ def judge_one(
     judge_bank: PromptBank,
     judge_client,
     question: str,
+    gold_answer: str,
     qwen_answer: str,
 ) -> tuple[dict[str, Any], str, str]:
-    """Render judge prompt, call kimi, parse JSON. Returns (parsed, raw, error).
+    """Render judge prompt, call the judge, parse JSON.
 
-    `error` is '' on success, else a short string. `raw` is the merged
-    content+reasoning for traceability.
+    Returns (parsed, raw, error). `error` is '' on success, else a short
+    string. `raw` is the merged content+reasoning for traceability.
     """
     try:
         jpp = judge_bank.render(
             JUDGE_SCENARIO,
-            {"question": question, "qwen_answer": qwen_answer},
+            {
+                "question": question,
+                "gold_answer": gold_answer,
+                "qwen_answer": qwen_answer,
+            },
         )
         reply = judge_client.chat(jpp.system, jpp.user)
         parsed = parse_judge_json(reply.content, reply.reasoning)
@@ -139,7 +151,7 @@ def judge_one(
         return (
             {
                 "parsed": False,
-                "gold": "",
+                "gold": gold_answer,
                 "qwen": qwen_answer,
                 "correct": 0,
                 "reason": f"judge: {type(exc).__name__}",
@@ -154,7 +166,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--input",
         type=Path,
-        default=REPO_ROOT / "datasets" / "raw_train" / "test.json",
+        default=REPO_ROOT / "datasets" / "raw_train" / "train.json",
+        help="JSON file of items with id/question/answer fields",
     )
     p.add_argument(
         "--output",
@@ -250,7 +263,11 @@ def main() -> int:
         if judge_bank is not None:
             jpp = judge_bank.render(
                 JUDGE_SCENARIO,
-                {"question": sample["question"], "qwen_answer": "<placeholder>"},
+                {
+                    "question": sample["question"],
+                    "gold_answer": str(sample.get("answer", "<unknown>")),
+                    "qwen_answer": "<placeholder>",
+                },
             )
             print(f"[judge.system]\n{jpp.system}\n")
             print(f"[judge.user]\n{jpp.user}")
@@ -283,18 +300,24 @@ def main() -> int:
             )
             raw = generate(messages, tokenizer, model, args.max_new_tokens)
             qwen_answer = extract_answer(raw)
+            gold_answer = str(row.get("answer", ""))
             out_csv.write(f"{row['id']},{qwen_answer.replace(chr(10), ' ')}\n")
 
             entry: dict[str, Any] = {
                 "id": row["id"],
                 "question": row["question"],
+                "gold_answer": gold_answer,
                 "qwen_raw": raw,
                 "qwen_answer": qwen_answer,
             }
 
             if judge_bank is not None and judge_client is not None:
                 parsed, judge_raw, judge_err = judge_one(
-                    judge_bank, judge_client, row["question"], qwen_answer
+                    judge_bank,
+                    judge_client,
+                    row["question"],
+                    gold_answer,
+                    qwen_answer,
                 )
                 entry["judge"] = parsed
                 entry["judge_raw"] = judge_raw
@@ -306,7 +329,9 @@ def main() -> int:
                             {
                                 "id": row["id"],
                                 "question": row["question"],
+                                "gold_answer": gold_answer,
                                 "qwen_answer": qwen_answer,
+                                "qwen_raw": raw,
                             },
                             ensure_ascii=False,
                         )

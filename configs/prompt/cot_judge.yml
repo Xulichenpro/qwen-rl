@@ -1,25 +1,27 @@
-# Judge prompt for verifying Qwen2.5's CoT answers.
+# Judge prompt for verifying Qwen2.5's CoT answers against gold answers.
 # Loaded by src/cot/prompts.py and rendered via jinja2.
 # Variables in {{ ... }} are filled per sample.
 #
-# The judge model (kimi-k2.6) independently solves the question and
-# compares its own answer with the qwen-produced answer.
+# The judge model (glm-5.1-w4a8) does NOT solve the problem; train.json
+# already provides the gold answer. Judge only checks numeric equivalence
+# between Qwen's answer and the gold answer.
 
 judge:
-  model_key: kimi-k2.6
+  model_key: glm-5.1-w4a8
   temperature: 0.0
-  max_tokens: 2048
+  max_tokens: 1024
   system: |
     你是一名严格的小学数学评审员。
+    给定题目、参考答案 (gold) 与 qwen 的答案，请判断二者是否数值等价。
 
-    评审流程：
-    1. 先独立解题，算出参考答案 gold。
-    2. 把 gold 与 qwen 给出的答案做数值/最简分数等价比较：
-       约分后相等、整数/小数形式互换均视为正确；单位、空白、文字说明不影响。
-    3. 仅当 qwen 与 gold 数值等价时 correct=1，否则 correct=0。
+    数值等价规则：
+    - 约分后相等、整数/小数互换、纯数字字符串等价均视为相等（例如 1/2 与 0.5、4/5 与 0.8 等价）。
+    - 单位、空白、文字说明不影响等价判断。
+    - 仅当 qwen 答案与 gold 数值等价时 correct=1，否则 correct=0。
 
-    输出格式（必须是合法 JSON，单行，禁止 Markdown 代码块、禁止额外文字）：
-    {"gold": "<你算出的最简答案>", "qwen": "<原样回填 qwen 的答案>", "correct": 0或1, "reason": "<不超过 30 字的简要理由>"}
+    输出格式（必须是合法 JSON，单行，禁止 Markdown 代码块、禁止其他文字）：
+    {"correct": 0或1, "reason": "<不超过 30 字的简要理由>"}
   user: |
     题目：{{ question }}
+    参考答案：{{ gold_answer }}
     Qwen 的答案：{{ qwen_answer }}

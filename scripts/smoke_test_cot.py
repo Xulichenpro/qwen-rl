@@ -48,11 +48,15 @@ def test_cot_render() -> None:
 def test_judge_render() -> None:
     bank = PromptBank(JUDGE_YAML)
     node = bank.get_node("judge")
-    _assert(node["model_key"] == "kimi-k2.6", f"unexpected judge model_key {node['model_key']!r}")
-    pp = bank.render("judge", {"question": "1 + 1 = ?", "qwen_answer": "2"})
+    _assert(node["model_key"] == "glm-5.1-w4a8", f"unexpected judge model_key {node['model_key']!r}")
+    pp = bank.render(
+        "judge",
+        {"question": "1 + 1 = ?", "gold_answer": "2", "qwen_answer": "2"},
+    )
     _assert(pp.temperature == 0.0, f"unexpected temperature {pp.temperature}")
     _assert(pp.max_tokens > 0, "judge max_tokens must be positive")
     _assert("题目：1 + 1 = ?" in pp.user, "judge user missing question")
+    _assert("参考答案：2" in pp.user, "judge user missing gold_answer")
     _assert("Qwen 的答案：2" in pp.user, "judge user missing qwen_answer")
     _assert('"correct"' in pp.system, "judge system missing JSON schema hint")
     print("ok  judge_render")
