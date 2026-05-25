@@ -8,3 +8,4 @@ Qwen/
 .env
 .env.*
 configs/model/models.yml
+outputs/
