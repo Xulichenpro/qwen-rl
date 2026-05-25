@@ -1,0 +1,67 @@
+# LoRA fine-tuning + inference config for Qwen2.5-0.5B-Instruct.
+# Loaded by src/lora/config.py via PyYAML, then re-rendered through Jinja2 so
+# any string field may reference other top-level sections, e.g.
+#   local_dir: "{{ model.cache_dir }}{{ model.id }}/"
+
+model:
+  id: Qwen/Qwen2.5-0.5B-Instruct
+  revision: master
+  cache_dir: "./"
+  # Where AutoTokenizer / AutoModel load from after snapshot_download.
+  local_dir: "{{ model.cache_dir }}{{ model.id }}/"
+  torch_dtype: bfloat16          # one of: bfloat16 | float16 | float32
+  device_map: auto
+  trust_remote_code: true
+  use_fast_tokenizer: false
+
+data:
+  train_path: datasets/raw_train/train.json
+  test_path: datasets/raw_train/test.json
+  max_length: 384
+  # Chat-template fragments used to build the SFT prompt. Override only if
+  # the base model's special tokens change.
+  im_start: "<|im_start|>"
+  im_end: "<|im_end|>"
+
+lora:
+  task_type: CAUSAL_LM           # peft.TaskType enum name
+  r: 8
+  lora_alpha: 32
+  lora_dropout: 0.1
+  inference_mode: false
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+
+training:
+  output_dir: ./output/Qwen
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 4
+  logging_steps: 10
+  num_train_epochs: 5
+  save_steps: 1000
+  learning_rate: 1.0e-4
+  save_on_each_node: true
+  gradient_checkpointing: true
+  report_to: none
+
+swanlab:
+  enabled: true
+  project: Qwen2.5-0.5B-finetune
+  experiment_name: "{{ model.id }}"
+  config:
+    model: "{{ model.id }}"
+    dataset: math_solver
+
+inference:
+  # Adapter checkpoint to load on top of the base model.
+  adapter_dir: "{{ training.output_dir }}/checkpoint-3750/"
+  output_csv: outputs/submissions/submit.csv
+  max_new_tokens: 512
+  device: cuda
+  do_sample: false

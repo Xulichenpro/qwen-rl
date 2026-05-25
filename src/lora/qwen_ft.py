@@ -1,90 +1,182 @@
+"""LoRA SFT for Qwen2.5-0.5B-Instruct.
+
+All hyper-parameters live in configs/train/lora.yml. Run with:
+    python -m src.lora.qwen_ft --config configs/train/lora.yml
+"""
+from __future__ import annotations
+
+import argparse
 import json
-import torch
-from modelscope import snapshot_download, AutoTokenizer
-from swanlab.integration.huggingface import SwanLabCallback
-from peft import LoraConfig, TaskType, get_peft_model
-from transformers import AutoModelForCausalLM, TrainingArguments, Trainer, DataCollatorForSeq2Seq
-import swanlab
+from pathlib import Path
+from typing import Callable
 
-            
-def process_func(example):
-    """
-    将数据集进行预处理
-    """
-    MAX_LENGTH = 384 
-    input_ids, attention_mask, labels = [], [], []
-    instruction = tokenizer(
-        f"<|im_start|>system\n{example['instruction']}<|im_end|>\n<|im_start|>user\n{example['question']}<|im_end|>\n<|im_start|>assistant\n",
-        add_special_tokens=False,
+from .config import LoraConfig, load_lora_config, resolve_task_type, resolve_torch_dtype
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def build_process_func(tokenizer, data_cfg: dict) -> Callable[[dict], dict]:
+    """Return a `process_func(example)` closure bound to tokenizer + lengths."""
+    max_length: int = int(data_cfg["max_length"])
+    im_start: str = data_cfg["im_start"]
+    im_end: str = data_cfg["im_end"]
+
+    def process_func(example: dict) -> dict:
+        instruction = tokenizer(
+            f"{im_start}system\n{example['instruction']}{im_end}\n"
+            f"{im_start}user\n{example['question']}{im_end}\n"
+            f"{im_start}assistant\n",
+            add_special_tokens=False,
+        )
+        response = tokenizer(f"{example['answer']}", add_special_tokens=False)
+        pad = tokenizer.pad_token_id
+        input_ids = instruction["input_ids"] + response["input_ids"] + [pad]
+        attention_mask = (
+            instruction["attention_mask"] + response["attention_mask"] + [1]
+        )
+        labels = (
+            [-100] * len(instruction["input_ids"])
+            + response["input_ids"]
+            + [pad]
+        )
+        if len(input_ids) > max_length:
+            input_ids = input_ids[:max_length]
+            attention_mask = attention_mask[:max_length]
+            labels = labels[:max_length]
+        return {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "labels": labels,
+        }
+
+    return process_func
+
+
+def _ensure_model_dir(cfg: LoraConfig) -> str:
+    from modelscope import snapshot_download
+
+    snapshot_download(
+        cfg.model["id"],
+        cache_dir=cfg.model["cache_dir"],
+        revision=cfg.model["revision"],
     )
-    response = tokenizer(f"{example['answer']}", add_special_tokens=False)
-    input_ids = instruction["input_ids"] + response["input_ids"] + [tokenizer.pad_token_id]
-    attention_mask = (
-        instruction["attention_mask"] + response["attention_mask"] + [1]
+    return cfg.model["local_dir"]
+
+
+def _load_dataset(train_path: Path, process_func: Callable[[dict], dict]) -> list[dict]:
+    with open(train_path, "r", encoding="utf-8") as f:
+        rows = json.load(f)
+    return [process_func(r) for r in rows]
+
+
+def _build_lora_model(model, cfg: LoraConfig):
+    from peft import LoraConfig as PeftLoraConfig, get_peft_model
+
+    peft_cfg = PeftLoraConfig(
+        task_type=resolve_task_type(cfg.lora["task_type"]),
+        target_modules=cfg.lora["target_modules"],
+        inference_mode=cfg.lora["inference_mode"],
+        r=cfg.lora["r"],
+        lora_alpha=cfg.lora["lora_alpha"],
+        lora_dropout=cfg.lora["lora_dropout"],
     )
-    labels = [-100] * len(instruction["input_ids"]) + response["input_ids"] + [tokenizer.pad_token_id]
-    if len(input_ids) > MAX_LENGTH:
-        input_ids = input_ids[:MAX_LENGTH]
-        attention_mask = attention_mask[:MAX_LENGTH]
-        labels = labels[:MAX_LENGTH]
-    return {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}   
+    return get_peft_model(model, peft_cfg)
 
-model_dir = snapshot_download("Qwen/Qwen2.5-0.5B-Instruct", cache_dir="./", revision="master")
 
-# Transformers加载模型权重
-tokenizer = AutoTokenizer.from_pretrained("./Qwen/Qwen2.5-0.5B-Instruct/", use_fast=False, trust_remote_code=True)
-model = AutoModelForCausalLM.from_pretrained("./Qwen/Qwen2.5-0.5B-Instruct/", device_map="auto", torch_dtype=torch.bfloat16)
-model.enable_input_require_grads()  # 开启梯度检查点时，要执行该方法
+def _build_training_args(cfg: LoraConfig):
+    from transformers import TrainingArguments
 
-train_json_new_path = "train.json"
+    return TrainingArguments(
+        output_dir=cfg.training["output_dir"],
+        per_device_train_batch_size=cfg.training["per_device_train_batch_size"],
+        gradient_accumulation_steps=cfg.training["gradient_accumulation_steps"],
+        logging_steps=cfg.training["logging_steps"],
+        num_train_epochs=cfg.training["num_train_epochs"],
+        save_steps=cfg.training["save_steps"],
+        learning_rate=float(cfg.training["learning_rate"]),
+        save_on_each_node=cfg.training["save_on_each_node"],
+        gradient_checkpointing=cfg.training["gradient_checkpointing"],
+        report_to=cfg.training["report_to"],
+    )
 
-with open(train_json_new_path, 'r', encoding='utf-8') as file:
-    train_data = json.load(file)
-train_dataset = []
-for d in train_data:
-    train_dataset.append(process_func(d))
 
-config = LoraConfig(
-    task_type=TaskType.CAUSAL_LM,
-    target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-    inference_mode=False,  # 训练模式
-    r=8,  # Lora 秩
-    lora_alpha=32,  # Lora alaph，具体作用参见 Lora 原理
-    lora_dropout=0.1,  # Dropout 比例
-)
+def _maybe_swanlab_callback(cfg: LoraConfig):
+    if not cfg.swanlab.get("enabled", False):
+        return None
+    from swanlab.integration.huggingface import SwanLabCallback
 
-model = get_peft_model(model, config)
+    return SwanLabCallback(
+        project=cfg.swanlab["project"],
+        experiment_name=cfg.swanlab["experiment_name"],
+        config=cfg.swanlab["config"],
+    )
 
-args = TrainingArguments(
-    output_dir="./output/Qwen",
-    per_device_train_batch_size=4,
-    gradient_accumulation_steps=4,
-    logging_steps=10,
-    num_train_epochs=5,
-    save_steps=1000,
-    learning_rate=1e-4,
-    save_on_each_node=True,
-    gradient_checkpointing=True,
-    report_to="none",
-)
 
-swanlab_callback = SwanLabCallback(
-    project="Qwen2.5-0.5B-fintune",
-    experiment_name="Qwen/Qwen2.5-0.5B-Instruct",
-    config={
-        "model": "Qwen/Qwen2.5-0.5B-Instruct",
-        "dataset": "news",
-    }
-)
+def run(cfg: LoraConfig) -> None:
+    import torch  # noqa: F401  (imported for the side-effect of CUDA init logging)
+    from modelscope import AutoTokenizer
+    from transformers import (
+        AutoModelForCausalLM,
+        DataCollatorForSeq2Seq,
+        Trainer,
+    )
 
-trainer = Trainer(
-    model=model,
-    args=args,
-    train_dataset=train_dataset,
-    data_collator=DataCollatorForSeq2Seq(tokenizer=tokenizer, padding=True),
-    callbacks=[swanlab_callback],
-)
+    local_dir = _ensure_model_dir(cfg)
 
-trainer.train()
+    tokenizer = AutoTokenizer.from_pretrained(
+        local_dir,
+        use_fast=cfg.model["use_fast_tokenizer"],
+        trust_remote_code=cfg.model["trust_remote_code"],
+    )
+    model = AutoModelForCausalLM.from_pretrained(
+        local_dir,
+        device_map=cfg.model["device_map"],
+        torch_dtype=resolve_torch_dtype(cfg.model["torch_dtype"]),
+    )
+    model.enable_input_require_grads()
 
-swanlab.finish()
+    process_func = build_process_func(tokenizer, cfg.data)
+    train_dataset = _load_dataset(Path(cfg.data["train_path"]), process_func)
+
+    model = _build_lora_model(model, cfg)
+    args = _build_training_args(cfg)
+
+    callbacks = []
+    cb = _maybe_swanlab_callback(cfg)
+    if cb is not None:
+        callbacks.append(cb)
+
+    trainer = Trainer(
+        model=model,
+        args=args,
+        train_dataset=train_dataset,
+        data_collator=DataCollatorForSeq2Seq(tokenizer=tokenizer, padding=True),
+        callbacks=callbacks,
+    )
+    trainer.train()
+
+    if cfg.swanlab.get("enabled", False):
+        import swanlab
+
+        swanlab.finish()
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser()
+    p.add_argument(
+        "--config",
+        type=Path,
+        default=REPO_ROOT / "configs" / "train" / "lora.yml",
+    )
+    return p.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    cfg = load_lora_config(args.config)
+    run(cfg)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
