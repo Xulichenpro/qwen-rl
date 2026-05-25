@@ -1,0 +1,10 @@
+.vscode/
+.omc/
+.venv/
+__pycache__/
+*.py[cod]
+*.pth
+Qwen/
+.env
+.env.*
+configs/model/models.yml
