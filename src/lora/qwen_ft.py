@@ -63,9 +63,15 @@ def _ensure_model_dir(cfg: LoraConfig) -> str:
     return cfg.model["local_dir"]
 
 
-def _load_dataset(train_path: Path, process_func: Callable[[dict], dict]) -> list[dict]:
+def _load_dataset(
+    train_path: Path,
+    process_func: Callable[[dict], dict],
+    max_items: int = -1,
+) -> list[dict]:
     with open(train_path, "r", encoding="utf-8") as f:
         rows = json.load(f)
+    if max_items >= 0:
+        rows = rows[:max_items]
     return [process_func(r) for r in rows]
 
 
@@ -136,7 +142,11 @@ def run(cfg: LoraConfig) -> None:
     model.enable_input_require_grads()
 
     process_func = build_process_func(tokenizer, cfg.data)
-    train_dataset = _load_dataset(Path(cfg.data["train_path"]), process_func)
+    train_dataset = _load_dataset(
+        Path(cfg.data["train_path"]),
+        process_func,
+        max_items=int(cfg.data.get("train_max_items", -1)),
+    )
 
     model = _build_lora_model(model, cfg)
     args = _build_training_args(cfg)
@@ -168,12 +178,20 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=REPO_ROOT / "configs" / "train" / "lora.yml",
     )
+    p.add_argument(
+        "--max-items",
+        type=int,
+        default=None,
+        help="cap training items (overrides data.train_max_items)",
+    )
     return p.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     cfg = load_lora_config(args.config)
+    if args.max_items is not None:
+        cfg.data["train_max_items"] = args.max_items
     run(cfg)
     return 0
 

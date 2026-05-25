@@ -10,8 +10,10 @@ No GPU required. Verifies:
 """
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -107,6 +109,73 @@ def test_cli_help() -> None:
     print("ok  cli_help")
 
 
+def test_limit_fields_present() -> None:
+    cfg = load_lora_config(CFG_PATH)
+    _assert(
+        "train_max_items" in cfg.data,
+        "data.train_max_items must be declared in lora.yml",
+    )
+    _assert(
+        "test_max_items" in cfg.data,
+        "data.test_max_items must be declared in lora.yml",
+    )
+    print("ok  limit_fields_present")
+
+
+def test_load_dataset_honors_limit() -> None:
+    """Truncation in _load_dataset should respect max_items."""
+    from src.lora.qwen_ft import _load_dataset
+
+    rows = [
+        {"instruction": "ins", "question": f"q{i}", "answer": str(i)}
+        for i in range(7)
+    ]
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", delete=False, encoding="utf-8"
+    ) as tf:
+        json.dump(rows, tf)
+        tmp_path = Path(tf.name)
+
+    try:
+        # Identity process_func so we can count items easily.
+        ds_all = _load_dataset(tmp_path, lambda r: r, max_items=-1)
+        _assert(len(ds_all) == 7, f"max_items=-1 should keep all, got {len(ds_all)}")
+        ds_three = _load_dataset(tmp_path, lambda r: r, max_items=3)
+        _assert(len(ds_three) == 3, f"max_items=3 should yield 3, got {len(ds_three)}")
+        ds_zero = _load_dataset(tmp_path, lambda r: r, max_items=0)
+        _assert(len(ds_zero) == 0, f"max_items=0 should yield 0, got {len(ds_zero)}")
+    finally:
+        tmp_path.unlink()
+    print("ok  load_dataset_honors_limit")
+
+
+def test_cli_max_items_override() -> None:
+    """--max-items should override cfg.data.train_max_items."""
+    proc = subprocess.run(
+        [sys.executable, "-m", "src.lora.qwen_ft", "--help"],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    _assert(
+        "--max-items" in proc.stdout,
+        f"qwen_ft --help should expose --max-items\nstdout:\n{proc.stdout}",
+    )
+    proc = subprocess.run(
+        [sys.executable, "-m", "src.lora.infer", "--help"],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    _assert(
+        "--max-items" in proc.stdout,
+        f"infer --help should expose --max-items\nstdout:\n{proc.stdout}",
+    )
+    print("ok  cli_max_items_override")
+
+
 def test_process_func_truncation() -> None:
     cfg = load_lora_config(CFG_PATH)
 
@@ -136,5 +205,8 @@ if __name__ == "__main__":
     test_jinja_interpolation()
     test_resolvers()
     test_cli_help()
+    test_limit_fields_present()
+    test_load_dataset_honors_limit()
+    test_cli_max_items_override()
     test_process_func_truncation()
     print("\nALL SMOKE TESTS PASSED")

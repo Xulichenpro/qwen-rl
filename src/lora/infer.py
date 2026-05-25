@@ -40,6 +40,9 @@ def run(cfg: LoraConfig) -> None:
 
     with open(cfg.data["test_path"], "r", encoding="utf-8") as f:
         test_data = json.load(f)
+    test_max_items = int(cfg.data.get("test_max_items", -1))
+    if test_max_items >= 0:
+        test_data = test_data[:test_max_items]
 
     tokenizer = AutoTokenizer.from_pretrained(
         cfg.model["local_dir"],
@@ -85,12 +88,20 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=REPO_ROOT / "configs" / "train" / "lora.yml",
     )
+    p.add_argument(
+        "--max-items",
+        type=int,
+        default=None,
+        help="cap inference items (overrides data.test_max_items)",
+    )
     return p.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     cfg = load_lora_config(args.config)
+    if args.max_items is not None:
+        cfg.data["test_max_items"] = args.max_items
     run(cfg)
     return 0
 

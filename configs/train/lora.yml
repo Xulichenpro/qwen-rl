@@ -18,6 +18,11 @@ data:
   train_path: datasets/raw_train/train.json
   test_path: datasets/raw_train/test.json
   max_length: 384
+  # Cap the number of items consumed at train / inference time.
+  # -1 means use the full dataset; any non-negative value truncates.
+  # Can be overridden from the CLI via --max-items.
+  train_max_items: -1
+  test_max_items: -1
   # Chat-template fragments used to build the SFT prompt. Override only if
   # the base model's special tokens change.
   im_start: "<|im_start|>"

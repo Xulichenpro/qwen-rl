@@ -1,9 +1,10 @@
 """Load YAML CoT prompt config and render Jinja2 templates.
 
 Mirrors the layout used by src/data_syn/prompts.py:
-- top-level scenario keys (here: `cot`)
-- each scenario has `model_key`, `system`, `user`
-Few-shot demonstrations are inlined into the `system` block of cot.yml.
+- top-level scenario keys (e.g. `cot` in cot.yml, `judge` in cot_judge.yml)
+- each scenario has `model_key`, `system`, `user`, plus optional
+  `temperature` and `max_tokens` (consumed by ChatClient for API calls).
+Few-shot demonstrations are inlined into the `system` block.
 """
 from __future__ import annotations
 
@@ -20,6 +21,8 @@ class PromptPair:
     model_key: str
     system: str
     user: str
+    temperature: float
+    max_tokens: int
 
 
 class PromptBank:
@@ -35,6 +38,9 @@ class PromptBank:
             lstrip_blocks=False,
         )
 
+    def get_node(self, name: str) -> dict[str, Any]:
+        return self._raw[name]
+
     def render(self, name: str, variables: Mapping[str, Any]) -> PromptPair:
         node = self._raw[name]
         sys_tmpl = self._env.from_string(node["system"])
@@ -43,6 +49,8 @@ class PromptBank:
             model_key=node["model_key"],
             system=sys_tmpl.render(**variables),
             user=usr_tmpl.render(**variables),
+            temperature=float(node.get("temperature", 0.0)),
+            max_tokens=int(node.get("max_tokens", 512)),
         )
 
     def build_messages(
