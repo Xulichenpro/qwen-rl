@@ -10,14 +10,14 @@ model:
   # Where AutoTokenizer / AutoModel load from after snapshot_download.
   local_dir: "{{ model.cache_dir }}{{ model.id }}/"
   torch_dtype: bfloat16          # one of: bfloat16 | float16 | float32
-  device_map: auto
+  device_map: cuda
   trust_remote_code: true
   use_fast_tokenizer: false
 
 data:
-  train_path: datasets/raw_train/train.json
+  train_path: datasets/syn_train/train_cot.jsonl
   test_path: datasets/raw_train/test.json
-  max_length: 384
+  max_length: 1024
   # Cap the number of items consumed at train / inference time.
   # -1 means use the full dataset; any non-negative value truncates.
   # Can be overridden from the CLI via --max-items.
@@ -48,7 +48,7 @@ training:
   per_device_train_batch_size: 4
   gradient_accumulation_steps: 4
   logging_steps: 10
-  num_train_epochs: 5
+  num_train_epochs: 20
   save_steps: 1000
   learning_rate: 1.0e-4
   save_on_each_node: true

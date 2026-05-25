@@ -9,3 +9,7 @@ Qwen/
 .env.*
 configs/model/models.yml
 outputs/
+
+.agents/
+.codex/
+.lock/
