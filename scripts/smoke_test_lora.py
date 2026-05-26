@@ -198,6 +198,21 @@ def test_infer_uses_sft_instruction() -> None:
     print("ok  infer_uses_sft_instruction")
 
 
+def test_infer_formats_parsed_answer_for_csv() -> None:
+    from src.lora.infer import format_prediction
+
+    response = "<think>\n1. 105 × 3 = 315。\n</think>\n<answer>\n315\n</answer>"
+    _assert(
+        format_prediction(response) == "315",
+        "infer should write the parsed final answer, not the full CoT",
+    )
+    _assert(
+        format_prediction("没有标签，最后出现 12") == "12",
+        "infer should reuse extract_answer numeric fallback",
+    )
+    print("ok  infer_formats_parsed_answer")
+
+
 def test_process_func_truncation() -> None:
     cfg = load_lora_config(CFG_PATH)
 
@@ -231,5 +246,6 @@ if __name__ == "__main__":
     test_load_dataset_honors_limit()
     test_cli_max_items_override()
     test_infer_uses_sft_instruction()
+    test_infer_formats_parsed_answer_for_csv()
     test_process_func_truncation()
     print("\nALL SMOKE TESTS PASSED")

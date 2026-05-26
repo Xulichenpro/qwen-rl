@@ -11,6 +11,8 @@ from pathlib import Path
 
 from tqdm import tqdm
 
+from src.cot.parse import extract_answer
+
 from .config import LoraConfig, load_lora_config, resolve_torch_dtype
 from .qwen_ft import INSTRUCTION
 
@@ -23,6 +25,11 @@ def build_messages(row: dict) -> list[dict[str, str]]:
         {"role": "system", "content": INSTRUCTION},
         {"role": "user", "content": row["question"]},
     ]
+
+
+def format_prediction(response: str) -> str:
+    """Return the parsed final answer for CSV submission."""
+    return extract_answer(response).replace("\n", " ")
 
 
 def predict(messages, model, tokenizer, *, device: str, max_new_tokens: int, do_sample: bool) -> str:
@@ -83,8 +90,7 @@ def run(cfg: LoraConfig) -> None:
                 max_new_tokens=max_new_tokens,
                 do_sample=do_sample,
             )
-            response = response.replace("\n", " ")
-            f.write(f"{row['id']},{response}\n")
+            f.write(f"{row['id']},{format_prediction(response)}\n")
 
 
 def parse_args() -> argparse.Namespace:
