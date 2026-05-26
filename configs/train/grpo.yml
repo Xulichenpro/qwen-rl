@@ -1,0 +1,70 @@
+# GRPO training config for Qwen2.5-0.5B-Instruct.
+# GRPO starts from the LoRA/SFT adapter in model.adapter_dir and uses the same
+# system instruction as SFT when datasets/grpo_train/*.jsonl is built.
+
+model:
+  id: Qwen/Qwen2.5-0.5B-Instruct
+  revision: master
+  cache_dir: "./"
+  local_dir: "{{ model.cache_dir }}{{ model.id }}/"
+  adapter_dir: ./output/Qwen/checkpoint-20
+  torch_dtype: bfloat16
+  device_map: cuda
+  trust_remote_code: true
+  use_fast_tokenizer: false
+
+data:
+  train_path: datasets/grpo_train/train.jsonl
+  eval_path: datasets/grpo_train/val.jsonl
+  train_max_items: -1
+  eval_max_items: -1
+
+training:
+  output_dir: ./output/Qwen-GRPO
+  per_device_train_batch_size: 4
+  per_device_eval_batch_size: 4
+  gradient_accumulation_steps: 8
+  logging_steps: 10
+  num_train_epochs: 1
+  save_steps: 100
+  eval_steps: 50
+  learning_rate: 1.0e-6
+  warmup_steps: 0
+  lr_scheduler_type: cosine
+  max_grad_norm: 1.0
+  bf16: true
+  fp16: false
+  use_cpu: false
+  save_total_limit: 3
+  save_on_each_node: true
+  gradient_checkpointing: true
+  report_to: none
+  eval_strategy: steps
+  save_strategy: steps
+  resume_from_checkpoint:
+  num_generations: 4
+  max_completion_length: 512
+  temperature: 0.8
+  top_p: 0.95
+  top_k: 0
+  beta: 0.001
+  epsilon: 0.2
+  reward_weights:
+    - 1.0
+    - 0.2
+    - 0.1
+  use_vllm: false
+  vllm_mode: colocate
+  vllm_gpu_memory_utilization: 0.3
+  log_completions: true
+  num_completions_to_print: 2
+
+swanlab:
+  enabled: true
+  project: Qwen2.5-0.5B-grpo
+  experiment_name: "{{ model.id }}-grpo"
+  config:
+    model: "{{ model.id }}"
+    base_adapter: "{{ model.adapter_dir }}"
+    dataset: grpo_train
+    method: grpo
