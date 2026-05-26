@@ -25,7 +25,7 @@ def _extract_answer(text: str) -> str:
     matches = _ANSWER_TAG_RE.findall(text or "")
     if not matches:
         return ""
-    return matches[-1].strip()
+    return matches[0].strip()
 
 
 def _to_fraction(text: str) -> Fraction | None:
