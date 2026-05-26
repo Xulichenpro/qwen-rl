@@ -1,0 +1,57 @@
+# DPO training config for Qwen2.5-0.5B-Instruct.
+# DPO starts from the LoRA/SFT adapter in model.adapter_dir, not from the bare
+# base model. The trainer loads it with PeftModel.from_pretrained(...,
+# is_trainable=True), so the existing adapter continues training under DPO.
+
+model:
+  id: Qwen/Qwen2.5-0.5B-Instruct
+  revision: master
+  cache_dir: "./"
+  local_dir: "{{ model.cache_dir }}{{ model.id }}/"
+  adapter_dir: ./output/Qwen/checkpoint-20
+  torch_dtype: bfloat16
+  device_map: cuda
+  trust_remote_code: true
+  use_fast_tokenizer: false
+
+data:
+  train_path: datasets/dpo_train/train.jsonl
+  eval_path: datasets/dpo_train/val.jsonl
+  train_max_items: -1
+  eval_max_items: -1
+
+training:
+  output_dir: ./output/Qwen-DPO
+  per_device_train_batch_size: 2
+  per_device_eval_batch_size: 2
+  gradient_accumulation_steps: 8
+  logging_steps: 10
+  num_train_epochs: 3
+  save_steps: 100
+  eval_steps: 50
+  learning_rate: 5.0e-7
+  beta: 0.1
+  max_length: 1024
+  warmup_steps: 0
+  lr_scheduler_type: cosine
+  max_grad_norm: 1.0
+  bf16: true
+  fp16: false
+  use_cpu: false
+  save_total_limit: 3
+  save_on_each_node: true
+  gradient_checkpointing: true
+  report_to: none
+  eval_strategy: steps
+  save_strategy: steps
+  resume_from_checkpoint:
+
+swanlab:
+  enabled: true
+  project: Qwen2.5-0.5B-dpo
+  experiment_name: "{{ model.id }}-dpo"
+  config:
+    model: "{{ model.id }}"
+    base_adapter: "{{ model.adapter_dir }}"
+    dataset: dpo_train
+    method: dpo
