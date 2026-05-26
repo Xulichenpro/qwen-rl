@@ -9,6 +9,7 @@ Qwen/
 .env.*
 configs/model/models.yml
 outputs/
+output/
 
 .agents/
 .codex/
