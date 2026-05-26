@@ -21,9 +21,9 @@ data:
 
 training:
   output_dir: ./output/Qwen-GRPO
-  per_device_train_batch_size: 4
-  per_device_eval_batch_size: 4
-  gradient_accumulation_steps: 8
+  per_device_train_batch_size: 8
+  per_device_eval_batch_size: 8
+  gradient_accumulation_steps: 4
   logging_steps: 10
   num_train_epochs: 1
   save_steps: 100
@@ -43,7 +43,7 @@ training:
   save_strategy: steps
   resume_from_checkpoint:
   num_generations: 4
-  max_completion_length: 512
+  max_completion_length: 1024
   temperature: 0.8
   top_p: 0.95
   top_k: 0
