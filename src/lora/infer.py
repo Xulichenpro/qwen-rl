@@ -12,8 +12,17 @@ from pathlib import Path
 from tqdm import tqdm
 
 from .config import LoraConfig, load_lora_config, resolve_torch_dtype
+from .qwen_ft import INSTRUCTION
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def build_messages(row: dict) -> list[dict[str, str]]:
+    """Build the inference prompt using the same system instruction as SFT."""
+    return [
+        {"role": "system", "content": INSTRUCTION},
+        {"role": "user", "content": row["question"]},
+    ]
 
 
 def predict(messages, model, tokenizer, *, device: str, max_new_tokens: int, do_sample: bool) -> str:
@@ -65,10 +74,7 @@ def run(cfg: LoraConfig) -> None:
 
     with open(out_path, "w", encoding="utf-8") as f:
         for row in tqdm(test_data, ncols=100, desc="infer"):
-            messages = [
-                {"role": "system", "content": row["instruction"]},
-                {"role": "user", "content": row["question"]},
-            ]
+            messages = build_messages(row)
             response = predict(
                 messages,
                 model,
@@ -94,6 +100,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="cap inference items (overrides data.test_max_items)",
     )
+    p.add_argument(
+        "--adapter-dir",
+        type=str,
+        default=None,
+        help="LoRA adapter directory to load (overrides inference.adapter_dir)",
+    )
     return p.parse_args()
 
 
@@ -102,6 +114,8 @@ def main() -> int:
     cfg = load_lora_config(args.config)
     if args.max_items is not None:
         cfg.data["test_max_items"] = args.max_items
+    if args.adapter_dir is not None:
+        cfg.inference["adapter_dir"] = args.adapter_dir
     run(cfg)
     return 0
 

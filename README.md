@@ -208,6 +208,14 @@ GRPO 的 reward 在 `src/rl/grpo/rewards.py`：
 python -m src.lora.infer --config configs/train/lora.yml
 ```
 
+也可以在命令行直接覆盖 adapter：
+
+```bash
+python -m src.lora.infer \
+  --config configs/train/lora.yml \
+  --adapter-dir ./output/Qwen-GRPO
+```
+
 默认输出路径是 `outputs/submissions/submit.csv`。
 
 ## 快速检查

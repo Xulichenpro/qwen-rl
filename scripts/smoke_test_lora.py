@@ -176,6 +176,28 @@ def test_cli_max_items_override() -> None:
     print("ok  cli_max_items_override")
 
 
+def test_infer_uses_sft_instruction() -> None:
+    """Inference should use the same CoT system prompt as SFT training."""
+    from src.lora.infer import build_messages
+    from src.lora.qwen_ft import INSTRUCTION
+
+    row = {
+        "instruction": "这是旧的直接输出答案指令，不应该用于 LoRA 推理。",
+        "question": "一加一等于几？",
+    }
+    messages = build_messages(row)
+
+    _assert(
+        messages[0] == {"role": "system", "content": INSTRUCTION},
+        "infer should use src.lora.qwen_ft.INSTRUCTION as system prompt",
+    )
+    _assert(
+        messages[1] == {"role": "user", "content": row["question"]},
+        "infer should keep the raw question as user prompt",
+    )
+    print("ok  infer_uses_sft_instruction")
+
+
 def test_process_func_truncation() -> None:
     cfg = load_lora_config(CFG_PATH)
 
@@ -208,5 +230,6 @@ if __name__ == "__main__":
     test_limit_fields_present()
     test_load_dataset_honors_limit()
     test_cli_max_items_override()
+    test_infer_uses_sft_instruction()
     test_process_func_truncation()
     print("\nALL SMOKE TESTS PASSED")
