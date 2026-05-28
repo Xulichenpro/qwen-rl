@@ -124,21 +124,37 @@ bash scripts/run_data_syn.sh
 
 ## 流程 2：SFT -> DPO
 
-先在合成 CoT 数据上训练 SFT LoRA：
+DPO 用来在 SFT LoRA 的基础上继续做偏好优化。它不会重新训练完整 Qwen，
+而是加载 base Qwen，再挂上已经训练好的 SFT adapter，并继续更新这个
+adapter。DPO 数据需要是 TRL 期望的偏好格式：
+
+```json
+{"prompt": "...", "chosen": "...", "rejected": "..."}
+```
+
+- `prompt`：数学题 prompt。
+- `chosen`：更好的 CoT 回答，通常来自通过评审的合成数据。
+- `rejected`：更差的 Qwen 回答，通常来自 CoT 测试中 judge 判错的输出。
+
+### 1. 先训练或准备 SFT checkpoint
+
+如果还没有 SFT adapter，先在合成 CoT 数据上训练 LoRA：
 
 ```bash
 python -m src.lora.qwen_ft --config configs/train/lora.yml
 ```
 
-选择一个 SFT checkpoint，然后把 `configs/train/dpo.yml` 里的
-`model.adapter_dir` 改成该 checkpoint，例如：
+训练完成后会得到类似：
 
-```yaml
-model:
-  adapter_dir: ./output/Qwen/checkpoint-3750
+```text
+output/Qwen/checkpoint-3750
 ```
 
-如果还没有 DPO 的 rejected 数据，先生成 Qwen 错误输出：
+也可以直接使用已经训练好的 SFT checkpoint。
+
+### 2. 准备 DPO 数据
+
+如果还没有 rejected 数据，先用 Qwen 做 CoT 测试并收集错题：
 
 ```bash
 python -m src.cot.run_cot \
@@ -149,16 +165,80 @@ python -m src.cot.run_cot \
   --dtype bf16
 ```
 
-构造 DPO 的 train/val JSONL：
+如果需要重新构造 DPO 的 train/val JSONL：
 
 ```bash
 python -m src.rl.dpo.data
 ```
 
-运行 DPO：
+默认会生成：
+
+```text
+datasets/dpo_train/train.jsonl
+datasets/dpo_train/val.jsonl
+```
+
+### 3. 训练前检查
+
+先用 dry-run 检查配置、数据条数和第一条样本，不会加载模型，也不会训练：
 
 ```bash
-python -m src.rl.dpo.run_dpo --config configs/train/dpo.yml
+python -m src.rl.dpo.train \
+  --config configs/train/dpo.yml \
+  --adapter-dir ./output/Qwen/checkpoint-3750 \
+  --dry-run
+```
+
+确认输出里 `train_total`、`eval_total`、`sft_adapter_dir` 都正确后再训练。
+
+### 4. 小规模 DPO 测试
+
+正式训练前建议先跑 8 条数据，确认流程能跑通：
+
+```bash
+python -m src.rl.dpo.train \
+  --config configs/train/dpo.yml \
+  --adapter-dir ./output/Qwen/checkpoint-3750 \
+  --output-dir ./output/Qwen-DPO-debug \
+  --max-items 8 \
+  --no-swanlab
+```
+
+### 5. 正式 DPO 训练
+
+把 `--adapter-dir` 换成正式 SFT checkpoint，把 `--output-dir` 换成新的输出目录：
+
+```bash
+python -m src.rl.dpo.train \
+  --config configs/train/dpo.yml \
+  --adapter-dir ./output/Qwen/checkpoint-3750 \
+  --output-dir ./output/Qwen-DPO-run1 \
+  --no-swanlab
+```
+
+关键参数在 `configs/train/dpo.yml`：
+
+```yaml
+training:
+  learning_rate: 5.0e-7
+  beta: 0.1
+  num_train_epochs: 3
+  max_length: 1024
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 8
+```
+
+其中 `learning_rate` 和 `beta` 最影响 DPO 更新强度。DPO 通常比 SFT 更容易训偏，
+所以学习率建议保持较小。
+
+### 6. DPO 后推理
+
+DPO 训练输出的仍然是 LoRA adapter。推理时加载 base Qwen，再挂上 DPO adapter：
+
+```bash
+python -m src.lora.infer \
+  --config configs/train/lora.yml \
+  --adapter-dir ./output/Qwen-DPO-run1
 ```
 
 ## 流程 3：SFT -> GRPO

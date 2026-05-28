@@ -1,1 +1,2 @@
-"""DPO dataset construction utilities."""
+"""Readable DPO training pipeline for the math-solver project."""
+
